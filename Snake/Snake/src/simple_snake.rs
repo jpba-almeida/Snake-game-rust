@@ -35,7 +35,6 @@ struct GridPosition {
     y: i16,
 }
 
-// Implementações para a estrutura GridPosition.
 impl GridPosition {
     // Cria uma nova posição na grade com coordenadas x e y.
     pub fn new(x: i16, y: i16) -> Self {
@@ -43,24 +42,46 @@ impl GridPosition {
     }
 
     // Cria uma posição na grade aleatória dentro dos limites especificados.
-    pub fn random(rng: &mut Rand32, max_x: i16, max_y: i16) -> Self {
-        (
-            rng.rand_range(0..(max_x as u32)) as i16,
-            rng.rand_range(0..(max_y as u32)) as i16,
-        )
-            .into()
+    pub fn random(max_x: i16, max_y: i16) -> Self {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        GridPosition {
+            x: rng.gen_range(0..max_x),
+            y: rng.gen_range(0..max_y),
+        }
     }
 
     // Cria uma nova posição na grade com base em uma posição atual e uma direção de movimento.
-    pub fn new_from_move(pos: GridPosition, dir: Direction) -> Self {
+    pub fn new_from_move(&self, dir: Direction, grid_size: (i16, i16)) -> Self {
         match dir {
-            Direction::Up => GridPosition::new(pos.x, (pos.y - 1).rem_euclid(GRID_SIZE.1)),
-            Direction::Down => GridPosition::new(pos.x, (pos.y + 1).rem_euclid(GRID_SIZE.1)),
-            Direction::Left => GridPosition::new((pos.x - 1).rem_euclid(GRID_SIZE.0), pos.y),
-            Direction::Right => GridPosition::new((pos.x + 1).rem_euclid(GRID_SIZE.0), pos.y),
+            Direction::Up => GridPosition::new(self.x, (self.y - 1).rem_euclid(grid_size.1)),
+            Direction::Down => GridPosition::new(self.x, (self.y + 1).rem_euclid(grid_size.1)),
+            Direction::Left => GridPosition::new((self.x - 1).rem_euclid(grid_size.0), self.y),
+            Direction::Right => GridPosition::new((self.x + 1).rem_euclid(grid_size.0), self.y),
         }
     }
 }
+
+// Enumeração para representar direções possíveis.
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Direction {
+    // Retorna a direção oposta.
+    pub fn inverse(&self) -> Self {
+        match self {
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+        }
+    }
+}
+
 
 // Implementações para conversão de GridPosition em um retângulo de gráficos.
 impl From<GridPosition> for graphics::Rect {
@@ -197,47 +218,51 @@ impl Snake {
         false
     }
 
-    // Atualiza o estado da Snake.
-    fn update(&mut self, food: &Food) {
-        if self.last_update_dir == self.dir && self.next_dir.is_some() {
-            self.dir = self.next_dir.unwrap();
-            self.next_dir = None;
-        }
-        let new_head_pos = GridPosition::new_from_move(self.head.pos, self.dir);
-        let new_head = Segment::new(new_head_pos);
-        self.body.push_front(self.head);
-        self.head = new_head;
-        if self.eats_self() {
-            self.ate = Some(Ate::Itself);
-        } else if self.eats(food) {
-            self.ate = Some(Ate::Food);
-        } else {
-            self.ate = None;
-        }
-        if self.ate.is_none() {
-            self.body.pop_back();
-        }
-        self.last_update_dir = self.dir;
+// Atualiza o estado da Snake.
+fn update(&mut self, food: &Food) {
+    if self.last_update_dir == self.dir && self.next_dir.is_some() {
+        self.dir = self.next_dir.unwrap();
+        self.next_dir = None;
     }
 
-    // Desenha a Snake no canvas.
-    fn draw(&self, canvas: &mut graphics::Canvas) {
-        for seg in &self.body {
-            canvas.draw(
-                &graphics::Quad,
-                graphics::DrawParam::new()
-                    .dest_rect(seg.pos.into())
-                    .color([0.3, 0.3, 0.0, 1.0]),
-            );
-        }
-        canvas.draw(
-            &graphics::Quad,
-            graphics::DrawParam::new()
-                .dest_rect(self.head.pos.into())
-                .color([1.0, 0.5, 0.0, 1.0]),
-        );
+    let new_head_pos = GridPosition::new_from_move(self.head.pos, self.dir);
+    let new_head = Segment::new(new_head_pos);
+    self.body.push_front(self.head);
+    self.head = new_head;
+
+    self.ate = if self.eats_self() {
+        Some(Ate::Itself)
+    } else if self.eats(food) {
+        Some(Ate::Food)
+    } else {
+        None
+    };
+
+    if self.ate.is_none() {
+        self.body.pop_back();
     }
+
+    self.last_update_dir = self.dir;
 }
+
+// Desenha a Snake no canvas.
+fn draw(&self, canvas: &mut graphics::Canvas) {
+    for seg in &self.body {
+        let seg_color = [0.3, 0.3, 0.0, 1.0];
+        self.draw_segment(canvas, seg.pos.into(), seg_color);
+    }
+
+    let head_color = [1.0, 0.5, 0.0, 1.0];
+    self.draw_segment(canvas, self.head.pos.into(), head_color);
+}
+
+// Função auxiliar para desenhar um segmento da Snake.
+fn draw_segment(&self, canvas: &mut graphics::Canvas, pos: graphics::Rect, color: [f32; 4]) {
+    canvas.draw(
+        &graphics::Quad,
+        graphics::DrawParam::new().dest_rect(pos).color(color),
+    );
+}}
 
 // Estrutura para representar o estado do jogo.
 struct GameState {
@@ -247,14 +272,11 @@ struct GameState {
     rng: Rand32,
 }
 
-// Implementações para a estrutura GameState.
 impl GameState {
     // Cria um novo estado de jogo.
     pub fn new() -> Self {
-        let snake_pos = (GRID_SIZE.0 / 4, GRID_SIZE.1 / 2).into();
-        let mut seed: [u8; 8] = [0; 8];
-        getrandom::getrandom(&mut seed[..]).expect("Could not create RNG seed");
-        let mut rng = Rand32::new(u64::from_ne_bytes(seed));
+        let mut rng = Rand32::new(0); // Inicialize o gerador de números aleatórios com uma semente padrão.
+        let snake_pos = GridPosition::random(&mut rng, GRID_SIZE.0, GRID_SIZE.1);
         let food_pos = GridPosition::random(&mut rng, GRID_SIZE.0, GRID_SIZE.1);
 
         GameState {
@@ -262,6 +284,8 @@ impl GameState {
             food: Food::new(food_pos),
             gameover: false,
             rng,
+            score: 0,        // Inicializa a pontuação como zero.
+            high_score: 0,   // Inicializa a pontuação máxima como zero.
         }
     }
 }
@@ -276,12 +300,18 @@ impl event::EventHandler<ggez::GameError> for GameState {
                 if let Some(ate) = self.snake.ate {
                     match ate {
                         Ate::Food => {
-                            let new_food_pos =
-                                GridPosition::random(&mut self.rng, GRID_SIZE.0, GRID_SIZE.1);
+                            let new_food_pos = GridPosition::random(&mut self.rng, GRID_SIZE.0, GRID_SIZE.1);
                             self.food.pos = new_food_pos;
+                            self.score += 1; // Incrementa a pontuação ao comer comida.
+                            if self.score > self.high_score {
+                                self.high_score = self.score; // Atualiza a pontuação máxima.
+                            }
                         }
                         Ate::Itself => {
                             self.gameover = true;
+                            if self.score > self.high_score {
+                                self.high_score = self.score; // Atualiza a pontuação máxima em caso de game over.
+                            }
                         }
                     }
                 }
@@ -316,7 +346,7 @@ impl event::EventHandler<ggez::GameError> for GameState {
 
 // Função principal do programa.
 fn main() -> GameResult {
-    let (ctx, events_loop) = ggez::ContextBuilder::new("snake", "Gray Olson")
+    let (ctx, events_loop) = ggez::ContextBuilder::new("snake", "JOÃO")
         .window_setup(ggez::conf::WindowSetup::default().title("Snake!"))
         .window_mode(ggez::conf::WindowMode::default().dimensions(SCREEN_SIZE.0, SCREEN_SIZE.1))
         .build()?;
